@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use hidapi::{HidDevice, HidError};
 use std::io::Read;
 
@@ -9,6 +10,7 @@ pub type UnknownCallback = fn(data: &[u8]) -> Result<(), SpeedEditorError>;
 
 pub struct SpeedEditor {
     pub device: HidDevice,
+    pub last_authenticated_at: Option<DateTime<Utc>>,
     pub current_keys: Vec<u8>,
     pub keys_callback: KeysCallback,
     pub key_down_callback: KeyDownCallback,
@@ -40,6 +42,11 @@ impl From<std::io::Error> for SpeedEditorError {
 }
 
 impl SpeedEditor {
+    const VID: u16 = 7899;
+    const PID: u16 = 55822;
+    const READ_TIMEOUT: i32 = 1000;
+    const AUTH_INTERVAL: i64 = 30000;
+
     const AUTH_EVEN_TBL: [u64; 8] = [
         4242707987619187656,
         3069963097229903046,
@@ -81,7 +88,7 @@ impl SpeedEditor {
      * Copyright (C) 2021 Sylvain Munaut <tnt@246tNt.com>
      *
      * */
-    pub fn auth(&self) -> Result<(), SpeedEditorError> {
+    pub fn auth(&mut self) -> Result<(), SpeedEditorError> {
         let mut buf = [0; 8];
         let mut bytes = vec![0; 10];
 
@@ -130,13 +137,25 @@ impl SpeedEditor {
             return Err(SpeedEditorError::AuthGetKbdStatusError);
         }
 
+        self.last_authenticated_at = Some(Utc::now());
+
         Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), SpeedEditorError> {
         let mut buf = [0; 64];
         loop {
-            let len = self.device.read(&mut buf)?;
+            match self.last_authenticated_at {
+                Some(last_authenticated_at) => {
+                    let elapsed_time = Utc::now() - last_authenticated_at;
+                    if elapsed_time.num_milliseconds() >= Self::AUTH_INTERVAL {
+                        self.auth()?;
+                    }
+                }
+                None => self.auth()?,
+            }
+
+            let len = self.device.read_timeout(&mut buf, Self::READ_TIMEOUT)?;
             if len > 0 {
                 if let Err(e) = self.process_events(&buf[..len]) {
                     eprintln!("{:?}", e);
@@ -221,10 +240,11 @@ impl SpeedEditor {
 
 pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
     let api = hidapi::HidApi::new()?;
-    let device = api.open(7899, 55822)?;
+    let device = api.open(SpeedEditor::VID, SpeedEditor::PID)?;
 
     let se = SpeedEditor {
         device,
+        last_authenticated_at: None,
         current_keys: Vec::default(),
         keys_callback: |_| Ok(()),
         key_down_callback: |_| Ok(()),
@@ -232,7 +252,6 @@ pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
         jog_callback: |_| Ok(()),
         unknown_callback: |_| Ok(()),
     };
-    se.auth()?;
 
     Ok(se)
 }

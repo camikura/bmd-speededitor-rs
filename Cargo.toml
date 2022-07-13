@@ -11,3 +11,4 @@ members = [
 
 [dependencies]
 hidapi = "1.4.1"
+chrono = "0.4"
