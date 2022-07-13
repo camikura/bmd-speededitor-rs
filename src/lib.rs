@@ -1,21 +1,41 @@
 use hidapi::{HidDevice, HidError};
 use std::io::Read;
 
+pub type KeysCallback = fn(keys: Vec<u8>) -> Result<(), SpeedEditorError>;
+pub type KeyDownCallback = fn(key: u8) -> Result<(), SpeedEditorError>;
+pub type KeyUpCallback = fn(key: u8) -> Result<(), SpeedEditorError>;
+pub type JogCallback = fn(value: i32) -> Result<(), SpeedEditorError>;
+pub type UnknownCallback = fn(data: &[u8]) -> Result<(), SpeedEditorError>;
+
 pub struct SpeedEditor {
     pub device: HidDevice,
+    pub current_keys: Vec<u8>,
+    pub keys_callback: KeysCallback,
+    pub key_down_callback: KeyDownCallback,
+    pub key_up_callback: KeyUpCallback,
+    pub jog_callback: JogCallback,
+    pub unknown_callback: UnknownCallback,
 }
 
 #[derive(Debug)]
 pub enum SpeedEditorError {
     HidApiError(hidapi::HidError),
+    StdIoError(std::io::Error),
     AuthGetKbdChallengeError,
     AuthGetKbdResponseError,
     AuthGetKbdStatusError,
+    CallbackExecutionError,
 }
 
 impl From<hidapi::HidError> for SpeedEditorError {
     fn from(e: HidError) -> Self {
         SpeedEditorError::HidApiError(e)
+    }
+}
+
+impl From<std::io::Error> for SpeedEditorError {
+    fn from(e: std::io::Error) -> Self {
+        SpeedEditorError::StdIoError(e)
     }
 }
 
@@ -113,12 +133,89 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn run(&self) -> Result<(), HidError> {
+    pub fn run(&mut self) -> Result<(), SpeedEditorError> {
         let mut buf = [0; 64];
         loop {
             let len = self.device.read(&mut buf)?;
-            println!("{:?}", &buf[..len]);
+            if len > 0 {
+                if let Err(e) = self.process_events(&buf[..len]) {
+                    eprintln!("{:?}", e);
+                }
+            }
         }
+    }
+
+    pub fn jog_event(&self, buf: &[u8]) -> Result<(), SpeedEditorError> {
+        let mut data = [0; 4];
+        (&buf[..]).read_exact(&mut data)?;
+        let value = i32::from_le_bytes(data) / 360;
+        (self.jog_callback)(value)
+    }
+
+    pub fn key_event(&mut self, buf: &[u8]) -> Result<(), SpeedEditorError> {
+        let current_keys = buf
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i % 2 == 0)
+            .filter(|&(_, &v)| v > 0)
+            .map(|(_, &v)| v)
+            .collect::<Vec<u8>>();
+
+        // Are you pressing 7 or more keys at the same time?
+        if current_keys == self.current_keys {
+            return Ok(());
+        }
+
+        let down_keys = current_keys
+            .iter()
+            .map(|&v| {
+                if self.current_keys.iter().find(|&k| *k == v) == None {
+                    v
+                } else {
+                    0
+                }
+            })
+            .filter(|&v| v > 0)
+            .collect::<Vec<u8>>();
+
+        let up_keys = self
+            .current_keys
+            .iter()
+            .map(|&v| {
+                if current_keys.iter().find(|&k| *k == v) == None {
+                    v
+                } else {
+                    0
+                }
+            })
+            .filter(|&v| v > 0)
+            .collect::<Vec<u8>>();
+
+        self.current_keys = current_keys.clone();
+
+        for k in down_keys {
+            (self.key_down_callback)(k)?;
+        }
+        for k in up_keys {
+            (self.key_up_callback)(k)?;
+        }
+        (self.keys_callback)(self.current_keys.to_owned())?;
+
+        Ok(())
+    }
+
+    pub fn unknown_event(&self, buf: &[u8]) -> Result<(), SpeedEditorError> {
+        (self.unknown_callback)(buf)
+    }
+
+    pub fn process_events(&mut self, buf: &[u8]) -> Result<(), SpeedEditorError> {
+        match buf[0] {
+            3 => self.jog_event(&buf[2..])?,
+            4 => self.key_event(&buf[1..])?,
+            _ => self.unknown_event(buf)?,
+        }
+
+        Ok(())
     }
 }
 
@@ -126,7 +223,15 @@ pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
     let api = hidapi::HidApi::new()?;
     let device = api.open(7899, 55822)?;
 
-    let se = SpeedEditor { device };
+    let se = SpeedEditor {
+        device,
+        current_keys: Vec::default(),
+        keys_callback: |_| Ok(()),
+        key_down_callback: |_| Ok(()),
+        key_up_callback: |_| Ok(()),
+        jog_callback: |_| Ok(()),
+        unknown_callback: |_| Ok(()),
+    };
     se.auth()?;
 
     Ok(se)
