@@ -3,6 +3,14 @@ use bmd_speededitor::{self};
 fn main() {
     match bmd_speededitor::new() {
         Ok(mut se) => {
+            se.connected_callback = || {
+                println!("Connected to the device");
+                Ok(())
+            };
+            se.disconnected_callback = || {
+                println!("Disconnected from the device");
+                Ok(())
+            };
             se.keys_callback = |keys| {
                 println!("current keys are: {:?}", keys);
                 Ok(())

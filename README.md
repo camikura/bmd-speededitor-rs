@@ -20,4 +20,4 @@ cargo build --package basic
 * Get Key Code (done)
 * Get Jog Scroll Status (done)
 * Get / Set LED Status
-* Handling Connect, Disconnect, Timeout
+* Handling Connect, Disconnect, Timeout (done)
