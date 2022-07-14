@@ -3,6 +3,11 @@ name = "bmd-speededitor"
 version = "0.1.4"
 authors = ["Akira Kamikura <akira.kamikura@gmail.com>"]
 edition = "2021"
+keywords = ["blackmagicdesign", "speededitor"]
+repository = "https://github.com/camikura/bmd-speededitor-rs"
+license-file = "LICENSE"
+readme = "README.md"
+description = "Speed Editor HID implementation in Rust"
 
 [workspace]
 members = [
