@@ -19,5 +19,6 @@ cargo build --package basic
 ### Todo
 * Get Key Code (done)
 * Get Jog Scroll Status (done)
-* Get / Set LED Status
+* Get / Set LED Status (done)
 * Handling Connect, Disconnect, Timeout (done)
+* Jog mode?

@@ -1,26 +1,28 @@
+pub mod handler;
+pub mod key;
+pub mod key_led;
+
 use chrono::{DateTime, Utc};
 use hidapi::{HidDevice, HidError};
 use std::{io::Read, rc::Rc, thread, time::Duration};
+use strum::IntoEnumIterator;
 
-pub type ConnectedCallback = fn() -> Result<(), SpeedEditorError>;
-pub type DisconnectedCallback = fn() -> Result<(), SpeedEditorError>;
-pub type KeysCallback = fn(keys: Vec<u8>) -> Result<(), SpeedEditorError>;
-pub type KeyDownCallback = fn(key: u8) -> Result<(), SpeedEditorError>;
-pub type KeyUpCallback = fn(key: u8) -> Result<(), SpeedEditorError>;
-pub type JogCallback = fn(value: i32) -> Result<(), SpeedEditorError>;
-pub type UnknownCallback = fn(data: &[u8]) -> Result<(), SpeedEditorError>;
+use key::Key;
+use key_led::KeyLed;
 
+#[derive(Clone)]
 pub struct SpeedEditor {
     pub device: Option<Rc<HidDevice>>,
     pub last_authenticated_at: Option<DateTime<Utc>>,
-    pub current_keys: Vec<u8>,
-    pub connected_callback: ConnectedCallback,
-    pub disconnected_callback: DisconnectedCallback,
-    pub keys_callback: KeysCallback,
-    pub key_down_callback: KeyDownCallback,
-    pub key_up_callback: KeyUpCallback,
-    pub jog_callback: JogCallback,
-    pub unknown_callback: UnknownCallback,
+    pub current_keys: Vec<Key>,
+    pub current_key_leds: Vec<KeyLed>,
+    pub connected_handler: handler::ConnectedHandler,
+    pub disconnected_handler: handler::DisconnectedHandler,
+    pub keys_handler: handler::KeysHandler,
+    pub key_down_handler: handler::KeyDownHandler,
+    pub key_up_handler: handler::KeyUpHandler,
+    pub jog_handler: handler::JogHandler,
+    pub unknown_handler: handler::UnknownHandler,
 }
 
 #[derive(Debug)]
@@ -187,72 +189,75 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn jog_event(&self, buf: &[u8]) -> Result<(), SpeedEditorError> {
+    pub fn jog_event(&self, mode: u8, buf: &[u8]) -> Result<(), SpeedEditorError> {
         let mut data = [0; 4];
         (&buf[..]).read_exact(&mut data)?;
         let value = i32::from_le_bytes(data) / 360;
-        (self.jog_callback)(value)
+        (self.jog_handler)(&self.clone(), mode, value)
     }
 
     pub fn key_event(&mut self, buf: &[u8]) -> Result<(), SpeedEditorError> {
-        let current_keys = buf
+        let current_keys: Vec<Key> = buf
             .iter()
             .enumerate()
             .filter(|&(i, _)| i % 2 == 0)
             .filter(|&(_, &v)| v > 0)
-            .map(|(_, &v)| v)
-            .collect::<Vec<u8>>();
+            .map(|(_, &v)| Key::try_from(v).unwrap())
+            .collect();
 
         // Are you pressing 7 or more keys at the same time?
         if current_keys == self.current_keys {
             return Ok(());
         }
 
-        let down_keys = current_keys
+        let down_keys: Vec<Key> = current_keys
             .iter()
             .map(|&v| {
                 if self.current_keys.iter().find(|&k| *k == v) == None {
                     v
                 } else {
-                    0
+                    Key::None
                 }
             })
-            .filter(|&v| v > 0)
-            .collect::<Vec<u8>>();
+            .filter(|&v| v > Key::None)
+            .collect();
 
-        let up_keys = self
+        let up_keys: Vec<Key> = self
             .current_keys
             .iter()
             .map(|&v| {
                 if current_keys.iter().find(|&k| *k == v) == None {
                     v
                 } else {
-                    0
+                    Key::None
                 }
             })
-            .filter(|&v| v > 0)
-            .collect::<Vec<u8>>();
+            .filter(|&v| v > Key::None)
+            .collect();
 
-        self.current_keys = current_keys.clone();
+        self.current_keys = current_keys.to_owned();
 
         for k in down_keys {
-            (self.key_down_callback)(k)?;
+            (self.key_down_handler)(&self.to_owned(), k)?;
         }
         for k in up_keys {
-            (self.key_up_callback)(k)?;
+            (self.key_up_handler)(&self.to_owned(), k)?;
         }
-        (self.keys_callback)(self.current_keys.to_owned())?;
+        (self.keys_handler)(&self.to_owned(), self.current_keys.to_owned())?;
 
         Ok(())
     }
 
     pub fn unknown_event(&self, buf: &[u8]) -> Result<(), SpeedEditorError> {
-        (self.unknown_callback)(buf)
+        (self.unknown_handler)(&self.to_owned(), buf)
     }
 
     pub fn process_events(&mut self, buf: &[u8]) -> Result<(), SpeedEditorError> {
         match buf[0] {
-            3 => self.jog_event(&buf[2..])?,
+            3 => {
+                let mode = buf[1];
+                self.jog_event(mode, &buf[2..])?
+            }
             4 => self.key_event(&buf[1..])?,
             _ => self.unknown_event(buf)?,
         }
@@ -262,7 +267,7 @@ impl SpeedEditor {
 
     pub fn disconnect(&mut self) -> Result<(), SpeedEditorError> {
         self.device = None;
-        (self.disconnected_callback)()
+        (self.disconnected_handler)()
     }
 
     // Try to connect
@@ -275,11 +280,84 @@ impl SpeedEditor {
 
         match self.device {
             Some(_) => {
-                (self.connected_callback)()?;
+                (self.connected_handler)(&self.clone())?;
             }
             None => {
                 thread::sleep(Duration::from_millis(Self::RECONNECT_INTERVAL));
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn add_key_led(&mut self, led: KeyLed) {
+        self.current_key_leds.push(led);
+    }
+
+    pub fn remove_key_led(&mut self, led: KeyLed) {
+        self.current_key_leds = self
+            .current_key_leds
+            .iter()
+            .filter(|&i| *i != led)
+            .map(|i| *i)
+            .collect::<Vec<KeyLed>>();
+    }
+
+    pub fn set_all_key_leds(&mut self, on: bool) -> Result<(), SpeedEditorError> {
+        for led in KeyLed::iter() {
+            if on {
+                self.add_key_led(led);
+            } else {
+                self.remove_key_led(led);
+            }
+        }
+
+        self.light_key_leds()?;
+
+        Ok(())
+    }
+
+    pub fn set_key_led(&mut self, led: KeyLed, on: bool) -> Result<(), SpeedEditorError> {
+        if on {
+            self.add_key_led(led);
+        } else {
+            self.remove_key_led(led);
+        }
+
+        self.light_key_leds()?;
+
+        Ok(())
+    }
+
+    pub fn set_leds(&mut self, leds: Vec<KeyLed>, on: bool) -> Result<(), SpeedEditorError> {
+        for led in leds {
+            if on {
+                self.add_key_led(led);
+            } else {
+                self.remove_key_led(led);
+            }
+        }
+
+        self.light_key_leds()?;
+
+        Ok(())
+    }
+
+    pub fn light_key_leds(&mut self) -> Result<(), SpeedEditorError> {
+        if let Some(device) = self.device.clone() {
+            let mut leds: i32 = 0;
+            for i in self.current_key_leds.iter() {
+                leds |= 1 << *i as i32;
+            }
+
+            let buf = leds.to_le_bytes();
+            let mut data = [0x2, 0x0, 0x0, 0x0, 0x0, 0x0];
+            data[0] = 0x2;
+            for i in 0..4 {
+                data[i + 1] = buf[i];
+            }
+
+            device.write(data.as_slice())?;
         }
 
         Ok(())
