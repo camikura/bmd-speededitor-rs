@@ -3,21 +3,21 @@ use bmd_speededitor::{self, Key, KeyLed};
 fn main() {
     match bmd_speededitor::new() {
         Ok(mut se) => {
-            se.connected_handler = |se| {
-                println!("Connected to the device");
+            se.on_connected(|se| {
                 se.to_owned()
                     .set_leds(vec![KeyLed::CloseUp, KeyLed::Cut], true)?;
+                println!("Connected to the device");
                 Ok(())
-            };
-            se.disconnected_handler = || {
+            });
+            se.on_disconnected(|| {
                 println!("Disconnected from the device");
                 Ok(())
-            };
-            se.keys_handler = |_, keys| {
+            });
+            se.on_keys(|_, keys| {
                 println!("current keys are: {:?}", keys);
                 Ok(())
-            };
-            se.key_down_handler = |se, key| {
+            });
+            se.on_key_down(|se, key| {
                 println!("key down event: {}", key);
                 match key {
                     Key::Cam1 => se.to_owned().set_key_led(KeyLed::Cam1, true)?,
@@ -25,8 +25,8 @@ fn main() {
                     _ => {}
                 }
                 Ok(())
-            };
-            se.key_up_handler = |se, key| {
+            });
+            se.on_key_up(|se, key| {
                 println!("key up event: {}", key);
                 match key {
                     Key::Cam1 => se.to_owned().set_key_led(KeyLed::Cam1, false)?,
@@ -34,15 +34,15 @@ fn main() {
                     _ => {}
                 }
                 Ok(())
-            };
-            se.jog_handler = |_, mode, value| {
+            });
+            se.on_jog(|_, mode, value| {
                 println!("jog event: {} / {}", mode, value);
                 Ok(())
-            };
-            se.unknown_handler = |_, data| {
+            });
+            se.on_unknown(|_, data| {
                 println!("unknown event: {:?}", data);
                 Ok(())
-            };
+            });
             se.run().unwrap();
         }
         Err(e) => {
