@@ -1,8 +1,10 @@
 [package]
-name = "basic"
+name = "osc"
 version = "0.2.1"
 authors = ["Akira Kamikura <akira.kamikura@gmail.com>"]
 edition = "2021"
 
 [dependencies]
 bmd-speededitor = { path = "../.." }
+rosc = "0.7"
+closure = "0.3"
