@@ -1,6 +1,13 @@
+use std::{cell::RefCell, rc::Rc};
+
 mod speed_editor;
 
-pub use speed_editor::{handler, key::Key, key_led::KeyLed, SpeedEditor, SpeedEditorError};
+pub use speed_editor::{
+    handler::{ConnectedHandler, Handler},
+    key::Key,
+    key_led::KeyLed,
+    SpeedEditor, SpeedEditorError,
+};
 
 pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
     let se = SpeedEditor {
@@ -8,13 +15,13 @@ pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
         last_authenticated_at: None,
         current_keys: Vec::default(),
         current_key_leds: Vec::default(),
-        connected_handler: |_| Ok(()),
-        disconnected_handler: || Ok(()),
-        keys_handler: |_, _| Ok(()),
-        key_down_handler: |_, _| Ok(()),
-        key_up_handler: |_, _| Ok(()),
-        jog_handler: |_, _, _| Ok(()),
-        unknown_handler: |_, _| Ok(()),
+        connected_handler: Rc::new(RefCell::new(Handler::new())),
+        disconnected_handler: Rc::new(RefCell::new(Handler::new())),
+        keys_handler: Rc::new(RefCell::new(Handler::new())),
+        key_down_handler: Rc::new(RefCell::new(Handler::new())),
+        key_up_handler: Rc::new(RefCell::new(Handler::new())),
+        jog_handler: Rc::new(RefCell::new(Handler::new())),
+        unknown_handler: Rc::new(RefCell::new(Handler::new())),
     };
 
     Ok(se)
