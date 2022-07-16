@@ -107,7 +107,7 @@ impl SpeedEditor {
      * Copyright (C) 2021 Sylvain Munaut <tnt@246tNt.com>
      *
      * */
-    pub fn auth_or_reconnect(&mut self) -> SpeedEditorResult {
+    fn auth_or_reconnect(&mut self) -> SpeedEditorResult {
         if let Some(device) = self.device.clone() {
             self.auth(device)?;
         } else {
@@ -116,7 +116,7 @@ impl SpeedEditor {
 
         Ok(())
     }
-    pub fn auth(&mut self, device: Arc<Mutex<HidDevice>>) -> SpeedEditorResult {
+    fn auth(&mut self, device: Arc<Mutex<HidDevice>>) -> SpeedEditorResult {
         let device = device.lock().unwrap();
 
         let mut buf = [0; 8];
@@ -179,7 +179,7 @@ impl SpeedEditor {
         }
     }
 
-    pub fn handle_loop(&mut self, device: Arc<Mutex<HidDevice>>) -> SpeedEditorResult {
+    fn handle_loop(&mut self, device: Arc<Mutex<HidDevice>>) -> SpeedEditorResult {
         match self.last_authenticated_at {
             Some(last_authenticated_at) => {
                 let elapsed_time = Utc::now() - last_authenticated_at;
@@ -207,7 +207,7 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn jog_event(&self, mode: u8, buf: &[u8]) -> SpeedEditorResult {
+    fn jog_event(&self, mode: u8, buf: &[u8]) -> SpeedEditorResult {
         let mut data = [0; 4];
         (&buf[..]).read_exact(&mut data)?;
         let value = i32::from_le_bytes(data) / 360;
@@ -215,7 +215,7 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn key_event(&mut self, buf: &[u8]) -> SpeedEditorResult {
+    fn key_event(&mut self, buf: &[u8]) -> SpeedEditorResult {
         let current_keys: Vec<Key> = buf
             .iter()
             .enumerate()
@@ -271,12 +271,12 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn unknown_event(&self, buf: &[u8]) -> SpeedEditorResult {
+    fn unknown_event(&self, buf: &[u8]) -> SpeedEditorResult {
         self.unknown_handler.lock().unwrap().call(buf)?;
         Ok(())
     }
 
-    pub fn process_events(&mut self, buf: &[u8]) -> SpeedEditorResult {
+    fn process_events(&mut self, buf: &[u8]) -> SpeedEditorResult {
         match buf[0] {
             3 => {
                 let mode = buf[1];
@@ -289,14 +289,14 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn disconnect(&mut self) -> SpeedEditorResult {
+    fn disconnect(&mut self) -> SpeedEditorResult {
         self.device = None;
         self.disconnected_handler.lock().unwrap().call()?;
         Ok(())
     }
 
     // Try to connect
-    pub fn connect(&mut self) -> SpeedEditorResult {
+    fn connect(&mut self) -> SpeedEditorResult {
         let api = hidapi::HidApi::new()?;
         self.device = match api.open(SpeedEditor::VID, SpeedEditor::PID) {
             Ok(device) => Some(Arc::new(Mutex::new(device))),
@@ -315,11 +315,11 @@ impl SpeedEditor {
         Ok(())
     }
 
-    pub fn add_key_led(&mut self, led: KeyLed) {
+    fn add_key_led(&mut self, led: KeyLed) {
         self.current_key_leds.push(led);
     }
 
-    pub fn remove_key_led(&mut self, led: KeyLed) {
+    fn remove_key_led(&mut self, led: KeyLed) {
         self.current_key_leds = self
             .current_key_leds
             .iter()
