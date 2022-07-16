@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 mod speed_editor;
 
@@ -15,13 +15,14 @@ pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
         last_authenticated_at: None,
         current_keys: Vec::default(),
         current_key_leds: Vec::default(),
-        connected_handler: Rc::new(RefCell::new(Handler::new())),
-        disconnected_handler: Rc::new(RefCell::new(Handler::new())),
-        keys_handler: Rc::new(RefCell::new(Handler::new())),
-        key_down_handler: Rc::new(RefCell::new(Handler::new())),
-        key_up_handler: Rc::new(RefCell::new(Handler::new())),
-        jog_handler: Rc::new(RefCell::new(Handler::new())),
-        unknown_handler: Rc::new(RefCell::new(Handler::new())),
+        connected_handler: Arc::new(Mutex::new(Handler::new())),
+        disconnected_handler: Arc::new(Mutex::new(Handler::new())),
+        keys_handler: Arc::new(Mutex::new(Handler::new())),
+        key_handler: Arc::new(Mutex::new(Handler::new())),
+        key_down_handler: Arc::new(Mutex::new(Handler::new())),
+        key_up_handler: Arc::new(Mutex::new(Handler::new())),
+        jog_handler: Arc::new(Mutex::new(Handler::new())),
+        unknown_handler: Arc::new(Mutex::new(Handler::new())),
     };
 
     Ok(se)
