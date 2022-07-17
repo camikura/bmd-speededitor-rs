@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 mod speed_editor;
 
 pub use speed_editor::{
@@ -10,22 +8,20 @@ pub use speed_editor::{
 };
 
 pub fn new() -> Result<SpeedEditor, SpeedEditorError> {
-    let se = SpeedEditor {
+    Ok(SpeedEditor {
         device: None,
         last_authenticated_at: None,
         current_keys: Vec::default(),
         current_key_leds: Vec::default(),
-        connected_handler: Arc::new(Mutex::new(Handler::new())),
-        disconnected_handler: Arc::new(Mutex::new(Handler::new())),
-        keys_handler: Arc::new(Mutex::new(Handler::new())),
-        key_handler: Arc::new(Mutex::new(Handler::new())),
-        key_down_handler: Arc::new(Mutex::new(Handler::new())),
-        key_up_handler: Arc::new(Mutex::new(Handler::new())),
-        jog_handler: Arc::new(Mutex::new(Handler::new())),
-        unknown_handler: Arc::new(Mutex::new(Handler::new())),
-    };
-
-    Ok(se)
+        connected_handler: Handler::new(),
+        disconnected_handler: Handler::new(),
+        keys_handler: Handler::new(),
+        key_handler: Handler::new(),
+        key_down_handler: Handler::new(),
+        key_up_handler: Handler::new(),
+        jog_handler: Handler::new(),
+        unknown_handler: Handler::new(),
+    })
 }
 
 #[cfg(test)]

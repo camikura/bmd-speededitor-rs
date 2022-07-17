@@ -21,7 +21,7 @@ fn main() {
         println!("Disconnected from the device");
         Ok(())
     });
-    se.on_keys(move |keys| {
+    se.on_keys(|keys| {
         println!("current keys are: {:?}", keys);
         Ok(())
     });
@@ -35,7 +35,7 @@ fn main() {
             .unwrap();
         Ok(())
     });
-    se.on_unknown(move |data| {
+    se.on_unknown(|data| {
         println!("unknown event: {:?}", data);
         Ok(())
     });
