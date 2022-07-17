@@ -1,25 +1,17 @@
-use super::{Key, SpeedEditor, SpeedEditorResult};
-
-pub type ConnectedCallback = Box<dyn FnMut(&SpeedEditor) -> SpeedEditorResult>;
-pub type DisconnectedCallback = Box<dyn FnMut() -> SpeedEditorResult>;
-pub type KeysCallback = Box<dyn FnMut(&SpeedEditor, Vec<Key>) -> SpeedEditorResult>;
-pub type KeyDownCallback = Box<dyn FnMut(&SpeedEditor, Key) -> SpeedEditorResult>;
-pub type KeyUpCallback = Box<dyn FnMut(&SpeedEditor, Key) -> SpeedEditorResult>;
-pub type JogCallback = Box<dyn FnMut(&SpeedEditor, u8, i32) -> SpeedEditorResult>;
-pub type UnknownCallback = Box<dyn FnMut(&SpeedEditor, &[u8]) -> SpeedEditorResult>;
+use super::{Key, SpeedEditorResult};
 
 pub trait Handler {
     fn new() -> Self;
 }
 
 pub struct ConnectedHandler {
-    pub callbacks: Vec<ConnectedCallback>,
+    pub callbacks: Vec<Box<dyn FnMut() -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl ConnectedHandler {
-    pub fn call(&mut self, se: &SpeedEditor) -> SpeedEditorResult {
+    pub fn call(&mut self) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se)?;
+            (&mut *callback)()?;
         }
         Ok(())
     }
@@ -32,7 +24,7 @@ impl Handler for ConnectedHandler {
 }
 
 pub struct DisconnectedHandler {
-    pub callbacks: Vec<DisconnectedCallback>,
+    pub callbacks: Vec<Box<dyn FnMut() -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl DisconnectedHandler {
@@ -51,13 +43,13 @@ impl Handler for DisconnectedHandler {
 }
 
 pub struct KeysHandler {
-    pub callbacks: Vec<KeysCallback>,
+    pub callbacks: Vec<Box<dyn FnMut(Vec<Key>) -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl KeysHandler {
-    pub fn call(&mut self, se: &SpeedEditor, keys: &Vec<Key>) -> SpeedEditorResult {
+    pub fn call(&mut self, keys: &Vec<Key>) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se, keys.clone())?;
+            (&mut *callback)(keys.clone())?;
         }
         Ok(())
     }
@@ -69,14 +61,33 @@ impl Handler for KeysHandler {
     }
 }
 
+pub struct KeyHandler {
+    pub callbacks: Vec<Box<dyn FnMut(Key, bool) -> SpeedEditorResult + Sync + Send>>,
+}
+
+impl KeyHandler {
+    pub fn call(&mut self, key: Key, down: bool) -> SpeedEditorResult {
+        for callback in self.callbacks.iter_mut() {
+            (&mut *callback)(key, down)?;
+        }
+        Ok(())
+    }
+}
+
+impl Handler for KeyHandler {
+    fn new() -> KeyHandler {
+        KeyHandler { callbacks: vec![] }
+    }
+}
+
 pub struct KeyDownHandler {
-    pub callbacks: Vec<KeyDownCallback>,
+    pub callbacks: Vec<Box<dyn FnMut(Key) -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl KeyDownHandler {
-    pub fn call(&mut self, se: &SpeedEditor, key: Key) -> SpeedEditorResult {
+    pub fn call(&mut self, key: Key) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se, key)?;
+            (&mut *callback)(key)?;
         }
         Ok(())
     }
@@ -89,13 +100,13 @@ impl Handler for KeyDownHandler {
 }
 
 pub struct KeyUpHandler {
-    pub callbacks: Vec<KeyUpCallback>,
+    pub callbacks: Vec<Box<dyn FnMut(Key) -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl KeyUpHandler {
-    pub fn call(&mut self, se: &SpeedEditor, key: Key) -> SpeedEditorResult {
+    pub fn call(&mut self, key: Key) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se, key)?;
+            (&mut *callback)(key)?;
         }
         Ok(())
     }
@@ -108,13 +119,13 @@ impl Handler for KeyUpHandler {
 }
 
 pub struct JogHandler {
-    pub callbacks: Vec<JogCallback>,
+    pub callbacks: Vec<Box<dyn FnMut(u8, i32) -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl JogHandler {
-    pub fn call(&mut self, se: &SpeedEditor, mode: u8, value: i32) -> SpeedEditorResult {
+    pub fn call(&mut self, mode: u8, value: i32) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se, mode, value)?;
+            (&mut *callback)(mode, value)?;
         }
         Ok(())
     }
@@ -127,13 +138,13 @@ impl Handler for JogHandler {
 }
 
 pub struct UnknownHandler {
-    pub callbacks: Vec<UnknownCallback>,
+    pub callbacks: Vec<Box<dyn FnMut(&[u8]) -> SpeedEditorResult + Sync + Send>>,
 }
 
 impl UnknownHandler {
-    pub fn call(&mut self, se: &SpeedEditor, data: &[u8]) -> SpeedEditorResult {
+    pub fn call(&mut self, data: &[u8]) -> SpeedEditorResult {
         for callback in self.callbacks.iter_mut() {
-            (&mut *callback)(se, data)?;
+            (&mut *callback)(data)?;
         }
         Ok(())
     }

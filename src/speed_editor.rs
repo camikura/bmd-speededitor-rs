@@ -4,30 +4,29 @@ pub mod key_led;
 
 use chrono::{DateTime, Utc};
 use hidapi::{HidDevice, HidError};
-use std::cell::RefCell;
-use std::{io::Read, rc::Rc, thread, time::Duration};
+use std::{io::Read, thread, time::Duration};
 use strum::IntoEnumIterator;
 
 use handler::{
-    ConnectedHandler, DisconnectedHandler, JogHandler, KeyDownHandler, KeyUpHandler, KeysHandler,
-    UnknownHandler,
+    ConnectedHandler, DisconnectedHandler, JogHandler, KeyDownHandler, KeyHandler, KeyUpHandler,
+    KeysHandler, UnknownHandler,
 };
 use key::Key;
 use key_led::KeyLed;
 
-#[derive(Clone)]
 pub struct SpeedEditor {
-    pub device: Option<Rc<HidDevice>>,
+    pub device: Option<HidDevice>,
     pub last_authenticated_at: Option<DateTime<Utc>>,
     pub current_keys: Vec<Key>,
     pub current_key_leds: Vec<KeyLed>,
-    pub connected_handler: Rc<RefCell<ConnectedHandler>>,
-    pub disconnected_handler: Rc<RefCell<DisconnectedHandler>>,
-    pub keys_handler: Rc<RefCell<KeysHandler>>,
-    pub key_down_handler: Rc<RefCell<KeyDownHandler>>,
-    pub key_up_handler: Rc<RefCell<KeyUpHandler>>,
-    pub jog_handler: Rc<RefCell<JogHandler>>,
-    pub unknown_handler: Rc<RefCell<UnknownHandler>>,
+    pub connected_handler: ConnectedHandler,
+    pub disconnected_handler: DisconnectedHandler,
+    pub keys_handler: KeysHandler,
+    pub key_handler: KeyHandler,
+    pub key_down_handler: KeyDownHandler,
+    pub key_up_handler: KeyUpHandler,
+    pub jog_handler: JogHandler,
+    pub unknown_handler: UnknownHandler,
 }
 
 pub type SpeedEditorResult = Result<(), SpeedEditorError>;
@@ -102,111 +101,113 @@ impl SpeedEditor {
      * Copyright (C) 2021 Sylvain Munaut <tnt@246tNt.com>
      *
      * */
-    pub fn auth_or_reconnect(&mut self) -> SpeedEditorResult {
-        if let Some(device) = self.device.clone() {
-            self.auth(device)?;
-        } else {
-            self.connect()?;
+    fn auth(&mut self) -> SpeedEditorResult {
+        let mut buf = [0; 8];
+        let mut bytes = vec![0; 10];
+
+        if let Some(device) = &self.device {
+            device.send_feature_report(&[0x6, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])?;
+            bytes[0] = 0x6;
+
+            let _ = device.get_feature_report(&mut bytes)?;
+            if bytes[0] != 0x6 || bytes[1] != 0x0 {
+                return Err(SpeedEditorError::AuthGetKbdChallengeError);
+            }
+
+            (&bytes[2..]).read_exact(&mut buf).unwrap();
+            let challenge = u64::from_le_bytes(buf);
+
+            device.send_feature_report(&[0x6, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])?;
+            let _ = device.get_feature_report(&mut bytes)?;
+            if bytes[0] != 0x6 || bytes[1] != 0x2 {
+                return Err(SpeedEditorError::AuthGetKbdResponseError);
+            }
+
+            let n = challenge & 7;
+            let mut v = self.rol8n(challenge, n);
+            let k: u64;
+            if (v & 1) == ((120 >> n) & 1) {
+                k = Self::AUTH_EVEN_TBL[n as usize];
+            } else {
+                v = v ^ self.rol8(v);
+                k = Self::AUTH_ODD_TBL[n as usize];
+            }
+
+            let response = v ^ (self.rol8(v) & Self::MASK) ^ k;
+            buf = response.to_le_bytes();
+
+            bytes[1] = 0x3;
+            for i in 0..8 {
+                bytes[i + 2] = buf[i];
+            }
+
+            device.send_feature_report(bytes.as_slice())?;
+
+            let _ = device.get_feature_report(&mut bytes)?;
+            if bytes[0] != 0x6 || bytes[1] != 0x4 {
+                return Err(SpeedEditorError::AuthGetKbdStatusError);
+            }
+
+            self.last_authenticated_at = Some(Utc::now());
         }
 
         Ok(())
     }
-    pub fn auth(&mut self, device: Rc<HidDevice>) -> SpeedEditorResult {
-        let mut buf = [0; 8];
-        let mut bytes = vec![0; 10];
 
-        device.send_feature_report(&[0x6, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])?;
-        bytes[0] = 0x6;
-
-        let _ = device.get_feature_report(&mut bytes)?;
-        if bytes[0] != 0x6 || bytes[1] != 0x0 {
-            return Err(SpeedEditorError::AuthGetKbdChallengeError);
-        }
-
-        (&bytes[2..]).read_exact(&mut buf).unwrap();
-        let challenge = u64::from_le_bytes(buf);
-
-        device.send_feature_report(&[0x6, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])?;
-        let _ = device.get_feature_report(&mut bytes)?;
-        if bytes[0] != 0x6 || bytes[1] != 0x2 {
-            return Err(SpeedEditorError::AuthGetKbdResponseError);
-        }
-
-        let n = challenge & 7;
-        let mut v = self.rol8n(challenge, n);
-        let k: u64;
-        if (v & 1) == ((120 >> n) & 1) {
-            k = Self::AUTH_EVEN_TBL[n as usize];
+    fn is_expired(&self) -> bool {
+        if let Some(at) = self.last_authenticated_at {
+            let elapsed_time = Utc::now() - at;
+            elapsed_time.num_milliseconds() >= Self::AUTH_INTERVAL
         } else {
-            v = v ^ self.rol8(v);
-            k = Self::AUTH_ODD_TBL[n as usize];
+            true
         }
-
-        let response = v ^ (self.rol8(v) & Self::MASK) ^ k;
-        buf = response.to_le_bytes();
-
-        bytes[1] = 0x3;
-        for i in 0..8 {
-            bytes[i + 2] = buf[i];
-        }
-
-        device.send_feature_report(bytes.as_slice())?;
-
-        let _ = device.get_feature_report(&mut bytes)?;
-        if bytes[0] != 0x6 || bytes[1] != 0x4 {
-            return Err(SpeedEditorError::AuthGetKbdStatusError);
-        }
-
-        self.last_authenticated_at = Some(Utc::now());
-
-        Ok(())
     }
 
     pub fn run(&mut self) -> SpeedEditorResult {
         loop {
-            if let Some(device) = self.device.clone() {
-                self.handle_loop(device)?;
-            } else {
+            if self.device.is_none() {
                 self.connect()?;
+                return Ok(());
+            }
+
+            if self.is_expired() {
+                self.auth()?;
+                return Ok(());
+            }
+
+            if let Some(device) = &self.device {
+                let mut buf = [0; 64];
+                match device.read_timeout(&mut buf, Self::READ_TIMEOUT) {
+                    Ok(len) => {
+                        if len > 0 {
+                            self.process_events(&buf[..len])?;
+                        }
+                    }
+                    Err(_) => self.disconnect()?,
+                }
             }
         }
     }
 
-    pub fn handle_loop(&mut self, device: Rc<HidDevice>) -> SpeedEditorResult {
-        match self.last_authenticated_at {
-            Some(last_authenticated_at) => {
-                let elapsed_time = Utc::now() - last_authenticated_at;
-                if elapsed_time.num_milliseconds() >= Self::AUTH_INTERVAL {
-                    self.auth_or_reconnect()?;
-                }
-            }
-            None => self.auth_or_reconnect()?,
-        }
-
-        let mut buf = [0; 64];
-        match device.read_timeout(&mut buf, Self::READ_TIMEOUT) {
-            Ok(len) => {
-                if len > 0 {
-                    self.process_events(&buf[..len])?;
-                }
-            }
-            Err(_) => self.disconnect()?,
+    fn process_events(&mut self, buf: &[u8]) -> SpeedEditorResult {
+        match buf[0] {
+            3 => self.jog_event(buf[1], &buf[2..])?,
+            4 => self.key_event(&buf[1..])?,
+            _ => self.unknown_event(buf)?,
         }
 
         Ok(())
     }
 
-    pub fn jog_event(&self, mode: u8, buf: &[u8]) -> SpeedEditorResult {
+    fn jog_event(&mut self, mode: u8, buf: &[u8]) -> SpeedEditorResult {
         let mut data = [0; 4];
         (&buf[..]).read_exact(&mut data)?;
         let value = i32::from_le_bytes(data) / 360;
-        self.jog_handler
-            .borrow_mut()
-            .call(&self.to_owned(), mode, value)?;
+        self.jog_handler.call(mode, value)?;
         Ok(())
     }
 
-    pub fn key_event(&mut self, buf: &[u8]) -> SpeedEditorResult {
+    fn key_event(&mut self, buf: &[u8]) -> SpeedEditorResult {
         let current_keys: Vec<Key> = buf
             .iter()
             .enumerate()
@@ -248,71 +249,53 @@ impl SpeedEditor {
         self.current_keys = current_keys.to_owned();
 
         for k in down_keys {
-            self.key_down_handler
-                .borrow_mut()
-                .call(&self.to_owned(), k)?;
+            self.key_handler.call(k, true)?;
+            self.key_down_handler.call(k)?;
         }
+
         for k in up_keys {
-            self.key_up_handler.borrow_mut().call(&self.to_owned(), k)?;
-        }
-        self.keys_handler
-            .borrow_mut()
-            .call(&self.to_owned(), &self.current_keys)?;
-
-        Ok(())
-    }
-
-    pub fn unknown_event(&self, buf: &[u8]) -> SpeedEditorResult {
-        self.unknown_handler
-            .borrow_mut()
-            .call(&self.to_owned(), buf)?;
-        Ok(())
-    }
-
-    pub fn process_events(&mut self, buf: &[u8]) -> SpeedEditorResult {
-        match buf[0] {
-            3 => {
-                let mode = buf[1];
-                self.jog_event(mode, &buf[2..])?
-            }
-            4 => self.key_event(&buf[1..])?,
-            _ => self.unknown_event(buf)?,
+            self.key_handler.call(k, false)?;
+            self.key_up_handler.call(k)?;
         }
 
+        self.keys_handler.call(&self.current_keys)?;
+
         Ok(())
     }
 
-    pub fn disconnect(&mut self) -> SpeedEditorResult {
+    fn unknown_event(&mut self, buf: &[u8]) -> SpeedEditorResult {
+        self.unknown_handler.call(buf)
+    }
+
+    fn disconnect(&mut self) -> SpeedEditorResult {
         self.device = None;
-        self.disconnected_handler.borrow_mut().call()?;
-        Ok(())
+        self.last_authenticated_at = None;
+        self.disconnected_handler.call()
     }
 
     // Try to connect
-    pub fn connect(&mut self) -> SpeedEditorResult {
+    fn connect(&mut self) -> SpeedEditorResult {
         let api = hidapi::HidApi::new()?;
-        self.device = match api.open(SpeedEditor::VID, SpeedEditor::PID) {
-            Ok(device) => Some(Rc::new(device)),
-            Err(_) => None,
-        };
 
-        match self.device {
-            Some(_) => {
-                self.connected_handler.borrow_mut().call(&self.to_owned())?;
+        self.device = match api.open(SpeedEditor::VID, SpeedEditor::PID) {
+            Ok(device) => {
+                self.connected_handler.call()?;
+                Some(device)
             }
-            None => {
+            Err(_) => {
                 thread::sleep(Duration::from_millis(Self::RECONNECT_INTERVAL));
+                None
             }
-        }
+        };
 
         Ok(())
     }
 
-    pub fn add_key_led(&mut self, led: KeyLed) {
+    fn add_key_led(&mut self, led: KeyLed) {
         self.current_key_leds.push(led);
     }
 
-    pub fn remove_key_led(&mut self, led: KeyLed) {
+    fn remove_key_led(&mut self, led: KeyLed) {
         self.current_key_leds = self
             .current_key_leds
             .iter()
@@ -330,9 +313,7 @@ impl SpeedEditor {
             }
         }
 
-        self.light_key_leds()?;
-
-        Ok(())
+        self.light_key_leds()
     }
 
     pub fn set_key_led(&mut self, led: KeyLed, on: bool) -> SpeedEditorResult {
@@ -342,9 +323,7 @@ impl SpeedEditor {
             self.remove_key_led(led);
         }
 
-        self.light_key_leds()?;
-
-        Ok(())
+        self.light_key_leds()
     }
 
     pub fn set_leds(&mut self, leds: Vec<KeyLed>, on: bool) -> SpeedEditorResult {
@@ -356,13 +335,11 @@ impl SpeedEditor {
             }
         }
 
-        self.light_key_leds()?;
-
-        Ok(())
+        self.light_key_leds()
     }
 
-    pub fn light_key_leds(&mut self) -> SpeedEditorResult {
-        if let Some(device) = self.device.clone() {
+    fn light_key_leds(&mut self) -> SpeedEditorResult {
+        if let Some(device) = &self.device {
             let mut leds: i32 = 0;
             for i in self.current_key_leds.iter() {
                 leds |= 1 << *i as i32;
@@ -377,78 +354,63 @@ impl SpeedEditor {
 
             device.write(data.as_slice())?;
         }
-
         Ok(())
     }
 
     pub fn on_connected<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor) -> SpeedEditorResult + 'static,
+        F: FnMut() -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.connected_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.connected_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_disconnected<F>(&mut self, callback: F)
     where
-        F: FnMut() -> SpeedEditorResult + 'static,
+        F: FnMut() -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.disconnected_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.disconnected_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_keys<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor, Vec<Key>) -> SpeedEditorResult + 'static,
+        F: FnMut(Vec<Key>) -> SpeedEditorResult + Send + Sync + 'static,
     {
-        self.keys_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.keys_handler.callbacks.push(Box::new(callback));
+    }
+
+    pub fn on_key<F>(&mut self, callback: F)
+    where
+        F: FnMut(Key, bool) -> SpeedEditorResult + Sync + Send + 'static,
+    {
+        self.key_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_key_down<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor, Key) -> SpeedEditorResult + 'static,
+        F: FnMut(Key) -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.key_down_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.key_down_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_key_up<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor, Key) -> SpeedEditorResult + 'static,
+        F: FnMut(Key) -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.key_up_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.key_up_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_jog<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor, u8, i32) -> SpeedEditorResult + 'static,
+        F: FnMut(u8, i32) -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.jog_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.jog_handler.callbacks.push(Box::new(callback));
     }
 
     pub fn on_unknown<F>(&mut self, callback: F)
     where
-        F: FnMut(&SpeedEditor, &[u8]) -> SpeedEditorResult + 'static,
+        F: FnMut(&[u8]) -> SpeedEditorResult + Sync + Send + 'static,
     {
-        self.unknown_handler
-            .borrow_mut()
-            .callbacks
-            .push(Box::new(callback));
+        self.unknown_handler.callbacks.push(Box::new(callback));
     }
 }
 
