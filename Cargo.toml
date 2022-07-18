@@ -1,6 +1,6 @@
 [package]
 name = "bmd-speededitor"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Akira Kamikura <akira.kamikura@gmail.com>"]
 edition = "2021"
 keywords = ["blackmagicdesign", "speededitor"]

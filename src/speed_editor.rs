@@ -167,12 +167,12 @@ impl SpeedEditor {
         loop {
             if self.device.is_none() {
                 self.connect()?;
-                return Ok(());
+                continue;
             }
 
             if self.is_expired() {
                 self.auth()?;
-                return Ok(());
+                continue;
             }
 
             if let Some(device) = &self.device {
